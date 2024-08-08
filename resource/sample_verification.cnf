@@ -1,0 +1,12 @@
+[req]
+prompt             = no
+distinguished_name = dn
+req_extensions     = ext
+
+[dn]
+CN = ${AWS_IOT_REGISTRATION_CODE}
+
+[ext]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage = codeSigning

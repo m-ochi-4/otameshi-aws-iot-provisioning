@@ -1,0 +1,158 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Transform:
+  - AWS::Serverless-2016-10-31
+  - AWS::LanguageExtensions
+
+
+Parameters:
+
+  IoTPolicyNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITPPolicy
+
+  IoTThingGroupNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITPGroup
+
+  IoTThingTypeNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITPThingType
+
+
+  TemplateName:
+    Type: String
+    Default: OtameshiJITPTemplate
+
+
+Resources:
+
+  IoTPolicyProvisioned:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Ref IoTPolicyNameProvisioned
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - iot:Connect
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: true
+          -
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+              - iot:PublishRetain
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          -
+            Effect: Allow
+            Action:
+              - iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+
+  IoTThingGroupProvisioned:
+    Type: AWS::IoT::ThingGroup
+    Properties:
+      ThingGroupName: !Ref IoTThingGroupNameProvisioned
+
+  IoTThingTypeProvisioned:
+    Type: AWS::IoT::ThingType
+    Properties:
+      ThingTypeName: !Ref IoTThingTypeNameProvisioned
+
+
+  IAMRoleProvisioning:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - iot.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSIoTThingsRegistration
+
+  IoTProvisioningTemplate:
+    Type: AWS::IoT::ProvisioningTemplate
+    Properties:
+      TemplateName: !Ref TemplateName
+      Enabled: true
+      TemplateType: JITP
+      ProvisioningRoleArn: !GetAtt IAMRoleProvisioning.Arn
+      TemplateBody: !Sub |
+        {
+          "Parameters": {
+            "AWS::IoT::Certificate::CommonName": {
+              "Type": "String"
+            },
+            "AWS::IoT::Certificate::SerialNumber": {
+              "Type": "String"
+            },
+            "AWS::IoT::Certificate::Id": {
+              "Type": "String"
+            }
+          },
+          "Resources": {
+            "thing": {
+              "Type": "AWS::IoT::Thing",
+              "OverrideSettings": {
+                "AttributePayload": "MERGE",
+                "ThingTypeName": "REPLACE",
+                "ThingGroups": "DO_NOTHING"
+              },
+              "Properties": {
+                "ThingName": {
+                  "Ref": "AWS::IoT::Certificate::CommonName"
+                },
+                "AttributePayload": {
+                  "serialNumber": {
+                    "Ref": "AWS::IoT::Certificate::SerialNumber"
+                  }
+                },
+                "ThingTypeName": "${IoTThingTypeProvisioned}",
+                "ThingGroups": [
+                  "${IoTThingGroupProvisioned}"
+                ]
+              }
+            },
+            "certificate": {
+              "Type": "AWS::IoT::Certificate",
+              "Properties": {
+                "CertificateId": {
+                  "Ref": "AWS::IoT::Certificate::Id"
+                },
+                "Status": "ACTIVE"
+              }
+            }
+          }
+        }
+
+
+Outputs:
+
+  IoTPolicyNameProvisioned:
+    Value: !Ref IoTPolicyProvisioned
+
+  IoTThingGroupIdProvisioned:
+    Value: !Ref IoTThingGroupProvisioned
+
+  IoTThingTypeIdProvisioned:
+    Value: !Ref IoTThingTypeProvisioned
+
+  TemplateName:
+    Value: !Ref IoTProvisioningTemplate

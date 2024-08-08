@@ -1,0 +1,47 @@
+[default]
+name       = ${ROOT_CA_NAME}
+default_ca = ca_default
+name_opt   = utf8,esc_ctrl,multiline,lname,align
+
+[ca_dn]
+commonName = ${ROOT_CA_NAME}
+
+[ca_default]
+home             = .
+database         = $home/db/index
+serial           = $home/db/serial
+crlnumber        = $home/db/crlnumber
+certificate      = $home/$name.crt
+private_key      = $home/private/$name.pem
+RANDFILE         = $home/private/random
+new_certs_dir    = $home/certs
+unique_subject   = no
+copy_extensions  = copy
+default_days     = 36500
+default_crl_days = 36500
+default_md       = sha256
+policy           = policy_optional_all
+
+[policy_optional_all]
+countryName            = optional
+stateOrProvinceName    = optional
+localityName           = optional
+organizationName       = optional
+organizationalUnitName = optional
+commonName             = supplied
+emailAddress           = optional
+
+[req]
+default_bits       = 2048
+encrypt_key        = yes
+default_md         = sha256
+utf8               = yes
+string_mask        = utf8only
+prompt             = no
+distinguished_name = ca_dn
+req_extensions     = ca_ext
+
+[ca_ext]
+basicConstraints     = critical,CA:true
+keyUsage             = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash

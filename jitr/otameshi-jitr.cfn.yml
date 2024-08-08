@@ -1,0 +1,174 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Transform:
+  - AWS::Serverless-2016-10-31
+  - AWS::LanguageExtensions
+
+
+Parameters:
+
+  CACertificateId:
+    Type: String
+    AllowedPattern: ^[a-f0-9]{64}$
+
+  IoTPolicyNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITRPolicy
+
+  IoTThingGroupNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITRGroup
+
+  IoTThingTypeNameProvisioned:
+    Type: String
+    Default: OtameshiProvisionedJITRThingType
+
+
+  LambdaFunctionNameRegistration:
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9\-]+$
+    Default: otameshi-jitr-registration
+
+
+Resources:
+
+  IoTPolicyProvisioned:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Ref IoTPolicyNameProvisioned
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - iot:Connect
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: true
+          -
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+              - iot:PublishRetain
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          -
+            Effect: Allow
+            Action:
+              - iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+
+  IoTThingGroupProvisioned:
+    Type: AWS::IoT::ThingGroup
+    Properties:
+      ThingGroupName: !Ref IoTThingGroupNameProvisioned
+
+  IoTThingTypeProvisioned:
+    Type: AWS::IoT::ThingType
+    Properties:
+      ThingTypeName: !Ref IoTThingTypeNameProvisioned
+
+
+  LogGroupLambdaFunctionRegistration:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LambdaFunctionNameRegistration}
+      RetentionInDays: 365
+      LogGroupClass: STANDARD
+
+  LambdaFunctionRegistration:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - LogGroupLambdaFunctionRegistration
+    Properties:
+      FunctionName: !Ref LambdaFunctionNameRegistration
+      CodeUri: ./registration
+
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Architectures:
+        - arm64
+      RuntimeManagementConfig:
+        UpdateRuntimeOn: Auto
+
+      Layers:
+        - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:770693421928:layer:Klayers-p312-arm64-cryptography:7
+
+      MemorySize: 256
+      Timeout: 10
+
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        -
+          Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - iot:CreateThing
+                - iot:AddThingToThingGroup
+                - iot:DescribeCertificate
+                - iot:UpdateCertificate
+              Resource:
+                - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+                - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/*
+                - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:cert/*
+            -
+              Effect: Allow
+              Action:
+                - iot:AttachThingPrincipal
+              Resource:
+                - "*"
+
+      Environment:
+        Variables:
+          CA_CERTIFICATE_ID: !Ref CACertificateId
+          THING_GROUP_NAME: !Ref IoTThingGroupProvisioned
+          THING_TYPE_NAME: !Ref IoTThingTypeProvisioned
+
+
+  IotTopicRuleLambdaInvoking:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub
+        - Lambda_${LambdaFunctionRegistration}
+        -
+          LambdaFunctionRegistration: !Join [ _, !Split [ '-', !Ref LambdaFunctionRegistration ] ]
+      TopicRulePayload:
+        RuleDisabled: false
+        AwsIotSqlVersion: 2015-10-08
+        Sql: !Sub SELECT * FROM '$aws/events/certificates/registered/${CACertificateId}' WHERE certificateStatus = "PENDING_ACTIVATION"
+        Actions:
+          -
+            Lambda:
+              FunctionArn: !GetAtt LambdaFunctionRegistration.Arn
+
+  LambdaPermissionRegistration:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunctionRegistration
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt IotTopicRuleLambdaInvoking.Arn
+      Action: lambda:InvokeFunction
+
+
+Outputs:
+
+  IoTPolicyNameProvisioned:
+    Value: !Ref IoTPolicyProvisioned
+
+  IoTThingGroupIdProvisioned:
+    Value: !Ref IoTThingGroupProvisioned
+
+  IoTThingTypeIdProvisioned:
+    Value: !Ref IoTThingTypeProvisioned
